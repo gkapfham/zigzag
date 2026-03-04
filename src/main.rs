@@ -48,12 +48,52 @@ impl Default for State {
             pane_match: None,
             pane_title_match: String::default(),
             sessions: Vec::default(),
-            fz_matcher: SkimMatcherV2::default(),
+            fz_matcher: SkimMatcherV2::default().ignore_case(),
         }
     }
 }
 
 impl State {
+    /// Enhanced fuzzy match: first tries standard skim fuzzy matching (case-insensitive),
+    /// then falls back to a "bag of characters" match where all query characters must
+    /// appear in the candidate (in any order, case-insensitive). This handles mistypes
+    /// like "ageM" matching "Manager" — all chars a, g, e, m are present in "manager".
+    fn enhanced_fuzzy_match(&self, candidate: &str, query: &str) -> Option<i64> {
+        // Primary: standard skim fuzzy match (already case-insensitive)
+        if let Some(score) = self.fz_matcher.fuzzy_match(candidate, query) {
+            return Some(score);
+        }
+
+        // Fallback: check if all query characters exist in the candidate
+        // (in any order, case-insensitive, consuming each matched char once)
+        let candidate_lower = candidate.to_lowercase();
+        let query_lower = query.to_lowercase();
+
+        let mut available: Vec<char> = candidate_lower.chars().collect();
+        let mut all_found = true;
+
+        for qc in query_lower.chars() {
+            if let Some(pos) = available.iter().position(|&c| c == qc) {
+                available.remove(pos);
+            } else {
+                all_found = false;
+                break;
+            }
+        }
+
+        if all_found && !query.is_empty() {
+            // Return a low positive score so skim primary matches rank higher
+            Some(1)
+        } else {
+            None
+        }
+    }
+
+    /// Check if a candidate matches the current input (for display filtering)
+    fn is_match(&self, candidate: &str) -> bool {
+        self.input.is_empty() || self.enhanced_fuzzy_match(candidate, &self.input).is_some()
+    }
+
     fn handle_key_event(&mut self, key: KeyWithModifier) -> bool {
         let mut should_render = true;
         match key.bare_key {
@@ -244,7 +284,7 @@ impl State {
         self.tab_match = None;
         self.result_index = 0;
         for (i, t) in self.tab_infos.iter().enumerate() {
-            if let Some(score) = self.fz_matcher.fuzzy_match(t.name.as_str(), &self.input) {
+            if let Some(score) = self.enhanced_fuzzy_match(t.name.as_str(), &self.input) {
                 if score > best_score {
                     best_score = score;
                     self.tab_match = Some(i);
@@ -263,13 +303,7 @@ impl State {
     fn seek_tab(&mut self, idx: usize) {
         self.result_index = idx;
         for (i, t) in self.tab_infos.iter().enumerate() {
-            if (self.input == String::default()
-                || self
-                    .fz_matcher
-                    .fuzzy_match(t.name.as_str(), &self.input)
-                    .is_some())
-                && i == self.result_index
-            {
+            if self.is_match(t.name.as_str()) && i == self.result_index {
                 self.tab_match = Some(i);
                 self.result_index = i;
                 break;
@@ -283,12 +317,7 @@ impl State {
         let mut found_next = None;
 
         for (i, t) in self.tab_infos.iter().enumerate() {
-            if self.input == String::default()
-                || self
-                    .fz_matcher
-                    .fuzzy_match(t.name.as_str(), &self.input)
-                    .is_some()
-            {
+            if self.is_match(t.name.as_str()) {
                 if first_match.is_none() {
                     first_match = Some(i);
                 }
@@ -320,12 +349,7 @@ impl State {
         let mut last_match = None;
 
         for (i, t) in self.tab_infos.iter().enumerate() {
-            if self.input == String::default()
-                || self
-                    .fz_matcher
-                    .fuzzy_match(t.name.as_str(), &self.input)
-                    .is_some()
-            {
+            if self.is_match(t.name.as_str()) {
                 if i == self.result_index && prev_match.is_some() {
                     break;
                 }
@@ -352,9 +376,7 @@ impl State {
         let mut found_next = None;
 
         for (i, session) in self.sessions.iter().enumerate() {
-            if self.input == String::default()
-                || self.fz_matcher.fuzzy_match(session, &self.input).is_some()
-            {
+            if self.is_match(session) {
                 if first_match.is_none() {
                     first_match = Some(i);
                 }
@@ -390,9 +412,7 @@ impl State {
         let mut last_match = None;
 
         for (i, session) in self.sessions.iter().enumerate() {
-            if self.input == String::default()
-                || self.fz_matcher.fuzzy_match(session, &self.input).is_some()
-            {
+            if self.is_match(session) {
                 if i == self.result_index && prev_match.is_some() {
                     break;
                 }
@@ -421,7 +441,7 @@ impl State {
 
         self.session_match = None;
         for (i, session) in self.sessions.iter().enumerate() {
-            if let Some(score) = self.fz_matcher.fuzzy_match(session, &self.input) {
+            if let Some(score) = self.enhanced_fuzzy_match(session, &self.input) {
                 if score > best_score {
                     best_score = score;
                     self.result_index = i;
@@ -444,9 +464,8 @@ impl State {
                     if pane.is_plugin {
                         continue;
                     }
-                    if let Some(score) = self
-                        .fz_matcher
-                        .fuzzy_match(pane.title.as_str(), &self.input)
+                    if let Some(score) =
+                        self.enhanced_fuzzy_match(pane.title.as_str(), &self.input)
                     {
                         if score > best_score {
                             best_score = score;
@@ -467,13 +486,7 @@ impl State {
                     if pane.is_plugin {
                         continue;
                     }
-                    if (self.input == String::default()
-                        || self
-                            .fz_matcher
-                            .fuzzy_match(pane.title.as_str(), &self.input)
-                            .is_some())
-                        && i == self.result_index
-                    {
+                    if self.is_match(pane.title.as_str()) && i == self.result_index {
                         self.pane_match = Some(pane.id);
                         self.pane_title_match = pane.title.to_owned();
                         self.result_index = i;
@@ -497,12 +510,7 @@ impl State {
                     if pane.is_plugin {
                         continue;
                     }
-                    if self.input == String::default()
-                        || self
-                            .fz_matcher
-                            .fuzzy_match(pane.title.as_str(), &self.input)
-                            .is_some()
-                    {
+                    if self.is_match(pane.title.as_str()) {
                         if first_match.is_none() {
                             first_match = Some(i);
                         }
@@ -547,12 +555,7 @@ impl State {
                     if pane.is_plugin {
                         continue;
                     }
-                    if self.input == String::default()
-                        || self
-                            .fz_matcher
-                            .fuzzy_match(pane.title.as_str(), &self.input)
-                            .is_some()
-                    {
+                    if self.is_match(pane.title.as_str()) {
                         if i == self.result_index && prev_match.is_some() {
                             break;
                         }
@@ -778,11 +781,7 @@ impl ZellijPlugin for State {
                 count += 1;
 
                 for (i, t) in self.tab_infos.iter().enumerate() {
-                    if self
-                        .fz_matcher
-                        .fuzzy_match(t.name.as_str(), &self.input)
-                        .is_some()
-                    {
+                    if self.is_match(t.name.as_str()) {
                         // limits display of completion
                         // based on available rows in pane
                         // with arbitrary buffer for safety
@@ -822,12 +821,7 @@ impl ZellijPlugin for State {
                 if let Some(p) = self.tab_match {
                     if let Some(panes) = self.pane_manifest.panes.get(&p) {
                         for (i, pane) in panes.iter().enumerate() {
-                            if !pane.is_plugin
-                                && self
-                                    .fz_matcher
-                                    .fuzzy_match(pane.title.as_str(), &self.input)
-                                    .is_some()
-                            {
+                            if !pane.is_plugin && self.is_match(pane.title.as_str()) {
                                 // limits display of completion
                                 // based on available rows in pane
                                 // with arbitrary buffer for safety
@@ -881,7 +875,7 @@ impl ZellijPlugin for State {
             View::Session => {
                 println!("Sessions: ");
                 for (i, session) in self.sessions.iter().enumerate() {
-                    if self.fz_matcher.fuzzy_match(session, &self.input).is_some() {
+                    if self.is_match(session) {
                         // limits display of completion
                         // based on available rows in pane
                         // with arbitrary buffer for safety
