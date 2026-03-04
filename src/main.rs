@@ -6,28 +6,62 @@ use owo_colors::OwoColorize;
 use std::collections::BTreeMap;
 use zellij_tile::prelude::*;
 
+/// The three main views the user can switch between using the Tab key.
 enum View {
     Session,
     Tab,
     Pane,
 }
 
+/// A flattened representation of a single pane from any tab in the session.
+/// This is used to build a searchable list of ALL panes across ALL tabs,
+/// so the user can fuzzy-find and jump to any pane regardless of which tab it lives in.
+#[derive(Clone)]
+struct FlatPane {
+    /// The pane's unique numeric ID (used by Zellij to focus it)
+    pane_id: u32,
+    /// The display title of the pane (e.g., the running command or custom name)
+    title: String,
+    /// The 0-indexed position of the tab this pane belongs to
+    tab_position: usize,
+    /// The human-readable name of the tab this pane belongs to
+    tab_name: String,
+}
+
 struct State {
+    /// User-provided plugin configuration from the Zellij config file
     userspace_configuration: BTreeMap<String, String>,
 
+    /// Which view (Tab, Pane, or Session) is currently active
     current_view: View,
+    /// The 0-indexed position of the currently focused tab
     focus_tab_pos: usize,
+    /// The index of the currently highlighted item in the active list
     result_index: usize,
+    /// All tab information received from Zellij
     tab_infos: Vec<TabInfo>,
+    /// Raw pane manifest from Zellij (panes grouped by tab position)
     pane_manifest: PaneManifest,
+    /// The current search/filter input string typed by the user
     input: String,
+    /// The cursor position within the input string (for Left/Right navigation)
     input_cusror_index: usize,
+    /// The index of the best-matching tab (into tab_infos)
     tab_match: Option<usize>,
+    /// The name of the best-matching session
     session_match: Option<String>,
+    /// The pane ID of the best-matching pane
     pane_match: Option<u32>,
+    /// The display title of the best-matching pane
     pane_title_match: String,
-    // sessions: Vec<SessionInfo>,
+    /// The tab position that the best-matching pane belongs to
+    pane_tab_position: Option<usize>,
+    /// A flattened, sorted list of ALL non-plugin panes across ALL tabs.
+    /// This is rebuilt whenever the pane manifest or tab info changes.
+    all_panes: Vec<FlatPane>,
+    /// All session names in the current Zellij instance
     sessions: Vec<String>,
+    /// The fuzzy matcher instance (configured for case-insensitive matching)
     fz_matcher: SkimMatcherV2,
 }
 
@@ -47,6 +81,8 @@ impl Default for State {
             session_match: None,
             pane_match: None,
             pane_title_match: String::default(),
+            pane_tab_position: None,
+            all_panes: Vec::default(),
             sessions: Vec::default(),
             fz_matcher: SkimMatcherV2::default().ignore_case(),
         }
@@ -89,9 +125,46 @@ impl State {
         }
     }
 
-    /// Check if a candidate matches the current input (for display filtering)
+    /// Check if a candidate matches the current input (for display filtering).
+    /// Returns true if the input is empty (everything matches) or if the
+    /// enhanced fuzzy match finds any match.
     fn is_match(&self, candidate: &str) -> bool {
         self.input.is_empty() || self.enhanced_fuzzy_match(candidate, &self.input).is_some()
+    }
+
+    /// Rebuild the flattened list of all panes across all tabs.
+    /// This is called whenever the pane manifest or tab info changes.
+    /// It collects every non-plugin pane from every tab, pairs it with
+    /// the tab's name, and sorts by tab position for consistent display order.
+    fn rebuild_all_panes(&mut self) {
+        let mut flat: Vec<FlatPane> = Vec::new();
+
+        // Iterate over every tab in the pane manifest
+        for (tab_pos, panes) in &self.pane_manifest.panes {
+            // Look up the tab's human-readable name from tab_infos
+            let tab_name = self
+                .tab_infos
+                .iter()
+                .find(|t| t.position == *tab_pos)
+                .map(|t| t.name.clone())
+                .unwrap_or_else(|| format!("Tab {}", tab_pos));
+
+            // Add each non-plugin pane to the flat list
+            for pane in panes {
+                if !pane.is_plugin {
+                    flat.push(FlatPane {
+                        pane_id: pane.id,
+                        title: pane.title.clone(),
+                        tab_position: *tab_pos,
+                        tab_name: tab_name.clone(),
+                    });
+                }
+            }
+        }
+
+        // Sort by tab position so panes are grouped by tab in the UI
+        flat.sort_by_key(|p| p.tab_position);
+        self.all_panes = flat;
     }
 
     fn handle_key_event(&mut self, key: KeyWithModifier) -> bool {
@@ -100,19 +173,32 @@ impl State {
             BareKey::Enter => match self.current_view {
                 View::Tab => {
                     if let Some(p) = self.tab_match {
-                        close_focus();
+                        // Close the plugin pane by its ID (not by focus) to avoid
+                        // accidentally closing a different pane, then switch tabs
+                        self.close();
                         switch_tab_to(p as u32 + 1);
                     }
                 }
                 View::Pane => {
                     if let Some(pane_id) = self.pane_match {
-                        close_focus();
+                        // IMPORTANT: close the plugin pane by its specific ID first,
+                        // before switching tabs. Using close_focus() here would be
+                        // dangerous because switch_tab_to() changes which pane has
+                        // focus, and close_focus() would then delete the wrong pane.
+                        self.close();
+                        // Switch to the tab that contains the target pane
+                        if let Some(tab_pos) = self.pane_tab_position {
+                            // switch_tab_to uses 1-indexed tab positions
+                            switch_tab_to(tab_pos as u32 + 1);
+                        }
+                        // Focus the target pane on the destination tab
                         focus_terminal_pane(pane_id, true);
                     }
                 }
                 View::Session => {
                     if let Some(sess) = &self.session_match {
-                        close_focus();
+                        // Close the plugin pane by its ID before switching sessions
+                        self.close();
                         switch_session(Some(sess));
                     }
                 }
@@ -262,12 +348,14 @@ impl State {
         }
 
         if let View::Pane = self.current_view {
-            // pane view
+            // When switching to pane view, reset pane selection state
+            // and select the first pane in the flattened cross-tab list
             self.pane_match = None;
             self.pane_title_match = String::default();
+            self.pane_tab_position = None;
             self.result_index = 0;
 
-            self.get_pane_at_index();
+            self.select_pane_at_index();
             return;
         }
 
@@ -452,134 +540,136 @@ impl State {
         }
     }
 
+    /// Fuzzy-find the best matching pane across ALL tabs.
+    /// Iterates through the flattened all_panes list and picks
+    /// the pane with the highest fuzzy match score.
     fn fuzzy_find_pane(&mut self) {
         let mut best_score = 0;
 
-        // reset match
+        // Reset the current pane selection
         self.pane_match = None;
         self.pane_title_match = String::default();
-        if let Some(p) = self.tab_match {
-            if let Some(panes) = self.pane_manifest.panes.get(&p) {
-                for (i, pane) in panes.iter().enumerate() {
-                    if pane.is_plugin {
-                        continue;
-                    }
-                    if let Some(score) =
-                        self.enhanced_fuzzy_match(pane.title.as_str(), &self.input)
-                    {
-                        if score > best_score {
-                            best_score = score;
-                            self.pane_match = Some(pane.id);
-                            self.pane_title_match = pane.title.to_owned();
-                            self.result_index = i;
-                        }
-                    }
+        self.pane_tab_position = None;
+        self.result_index = 0;
+
+        // Search through all panes across all tabs
+        for (i, flat) in self.all_panes.iter().enumerate() {
+            if let Some(score) = self.enhanced_fuzzy_match(flat.title.as_str(), &self.input) {
+                if score > best_score {
+                    best_score = score;
+                    self.pane_match = Some(flat.pane_id);
+                    self.pane_title_match = flat.title.clone();
+                    self.pane_tab_position = Some(flat.tab_position);
+                    self.result_index = i;
                 }
             }
         }
     }
 
-    fn get_pane_at_index(&mut self) {
-        if let Some(p) = self.tab_match {
-            if let Some(panes) = self.pane_manifest.panes.get(&p) {
-                for (i, pane) in panes.iter().enumerate() {
-                    if pane.is_plugin {
-                        continue;
-                    }
-                    if self.is_match(pane.title.as_str()) && i == self.result_index {
-                        self.pane_match = Some(pane.id);
-                        self.pane_title_match = pane.title.to_owned();
-                        self.result_index = i;
-                        break;
-                    }
-                }
+    /// Select the pane at the current result_index in the flattened pane list.
+    /// This is called when switching to pane view to initialize the selection.
+    fn select_pane_at_index(&mut self) {
+        for (i, flat) in self.all_panes.iter().enumerate() {
+            // Find the first pane that matches the current input and is at the result_index
+            if self.is_match(flat.title.as_str()) && i == self.result_index {
+                self.pane_match = Some(flat.pane_id);
+                self.pane_title_match = flat.title.clone();
+                self.pane_tab_position = Some(flat.tab_position);
+                break;
             }
         }
     }
 
+    /// Move the pane selection down (to the next matching pane in the list).
+    /// Wraps around to the first match if we reach the end.
     fn move_down_pane(&mut self) {
         let mut first_match = None;
         let mut seek_result = false;
         let mut found_next = None;
 
+        // Reset current selection before searching
         self.pane_match = None;
         self.pane_title_match = String::default();
-        if let Some(p) = self.tab_match {
-            if let Some(panes) = self.pane_manifest.panes.get(&p) {
-                for (i, pane) in panes.iter().enumerate() {
-                    if pane.is_plugin {
-                        continue;
-                    }
-                    if self.is_match(pane.title.as_str()) {
-                        if first_match.is_none() {
-                            first_match = Some(i);
-                        }
+        self.pane_tab_position = None;
 
-                        if i == self.result_index {
-                            seek_result = true;
-                            continue;
-                        }
-
-                        if seek_result {
-                            self.pane_match = Some(pane.id);
-                            self.pane_title_match = pane.title.to_owned();
-                            found_next = Some(i);
-                            self.result_index = i;
-                            break;
-                        }
-                    }
+        for (i, flat) in self.all_panes.iter().enumerate() {
+            if self.is_match(flat.title.as_str()) {
+                // Remember the very first match (for wrap-around)
+                if first_match.is_none() {
+                    first_match = Some(i);
                 }
 
-                if found_next.is_none() {
-                    if let Some(i) = first_match {
-                        if let Some(pane) = panes.get(i) {
-                            self.pane_match = Some(pane.id);
-                            self.pane_title_match = pane.title.to_owned();
-                            self.result_index = i;
-                        }
-                    }
+                // When we find the currently selected item, start seeking the next
+                if i == self.result_index {
+                    seek_result = true;
+                    continue;
+                }
+
+                // The first match after the current selection becomes the new selection
+                if seek_result {
+                    self.pane_match = Some(flat.pane_id);
+                    self.pane_title_match = flat.title.clone();
+                    self.pane_tab_position = Some(flat.tab_position);
+                    found_next = Some(i);
+                    self.result_index = i;
+                    break;
+                }
+            }
+        }
+
+        // If no next match was found, wrap around to the first match
+        if found_next.is_none() {
+            if let Some(i) = first_match {
+                if let Some(flat) = self.all_panes.get(i) {
+                    self.pane_match = Some(flat.pane_id);
+                    self.pane_title_match = flat.title.clone();
+                    self.pane_tab_position = Some(flat.tab_position);
+                    self.result_index = i;
                 }
             }
         }
     }
 
+    /// Move the pane selection up (to the previous matching pane in the list).
+    /// Wraps around to the last match if we reach the beginning.
     fn move_up_pane(&mut self) {
         let mut prev_match = None;
         let mut last_match = None;
 
+        // Reset current selection before searching
         self.pane_match = None;
         self.pane_title_match = String::default();
-        if let Some(p) = self.tab_match {
-            if let Some(panes) = self.pane_manifest.panes.get(&p) {
-                for (i, pane) in panes.iter().enumerate() {
-                    if pane.is_plugin {
-                        continue;
-                    }
-                    if self.is_match(pane.title.as_str()) {
-                        if i == self.result_index && prev_match.is_some() {
-                            break;
-                        }
-                        prev_match = Some(i);
-                        last_match = Some(i);
-                    }
-                }
+        self.pane_tab_position = None;
 
-                if let Some(i) = prev_match {
-                    if let Some(pane) = panes.get(i) {
-                        self.pane_match = Some(pane.id);
-                        self.pane_title_match = pane.title.to_owned();
-                        self.result_index = i;
-                    }
-                    return;
+        for (i, flat) in self.all_panes.iter().enumerate() {
+            if self.is_match(flat.title.as_str()) {
+                // If we've reached the current selection and have a previous match, use it
+                if i == self.result_index && prev_match.is_some() {
+                    break;
                 }
+                prev_match = Some(i);
+                last_match = Some(i);
+            }
+        }
 
-                if let Some(i) = last_match {
-                    if let Some(pane) = panes.get(i) {
-                        self.pane_match = Some(pane.id);
-                        self.pane_title_match = pane.title.to_owned();
-                        self.result_index = i;
-                    }
-                }
+        // Use the previous match if found
+        if let Some(i) = prev_match {
+            if let Some(flat) = self.all_panes.get(i) {
+                self.pane_match = Some(flat.pane_id);
+                self.pane_title_match = flat.title.clone();
+                self.pane_tab_position = Some(flat.tab_position);
+                self.result_index = i;
+            }
+            return;
+        }
+
+        // Otherwise wrap around to the last match
+        if let Some(i) = last_match {
+            if let Some(flat) = self.all_panes.get(i) {
+                self.pane_match = Some(flat.pane_id);
+                self.pane_title_match = flat.title.clone();
+                self.pane_tab_position = Some(flat.tab_position);
+                self.result_index = i;
             }
         }
     }
@@ -694,10 +784,14 @@ impl ZellijPlugin for State {
             Event::TabUpdate(tab_info) => {
                 self.tab_infos = tab_info;
                 self.get_focused_tab();
+                // Rebuild the flattened pane list since tab names may have changed
+                self.rebuild_all_panes();
                 should_render = true;
             }
             Event::PaneUpdate(pane_manifest) => {
                 self.pane_manifest = pane_manifest;
+                // Rebuild the flattened pane list with the new pane data
+                self.rebuild_all_panes();
                 should_render = true;
             }
             Event::SessionUpdate(session_infos, _) => {
@@ -817,30 +911,40 @@ impl ZellijPlugin for State {
                 }
             }
             View::Pane => {
-                println!("Panes: ");
-                if let Some(p) = self.tab_match {
-                    if let Some(panes) = self.pane_manifest.panes.get(&p) {
-                        for (i, pane) in panes.iter().enumerate() {
-                            if !pane.is_plugin && self.is_match(pane.title.as_str()) {
-                                // limits display of completion
-                                // based on available rows in pane
-                                // with arbitrary buffer for safety
-                                if count >= rows - 4 {
-                                    println!(" - {}", "...".dimmed());
-                                    break;
-                                }
-                                if i == self.result_index {
-                                    println!(" - {}", pane.title.blue().bold());
-                                } else {
-                                    println!(" - {}", pane.title.dimmed());
-                                }
-                                count += 1;
-                            }
+                // Display ALL panes across ALL tabs (not just one tab)
+                println!("Panes (all tabs): ");
+
+                // Iterate through the flattened list of all panes
+                for (i, flat) in self.all_panes.iter().enumerate() {
+                    if self.is_match(flat.title.as_str()) {
+                        // Limit display based on available rows in the plugin pane
+                        if count >= rows - 4 {
+                            println!(" - {}", "...".dimmed());
+                            break;
                         }
+
+                        // Show pane title with its tab name in brackets so the
+                        // user knows which tab each pane belongs to
+                        if i == self.result_index {
+                            println!(
+                                " - {} {}",
+                                flat.title.blue().bold(),
+                                format!("[{}]", flat.tab_name).dimmed()
+                            );
+                        } else {
+                            println!(
+                                " - {} {}",
+                                flat.title.dimmed(),
+                                format!("[{}]", flat.tab_name).dimmed()
+                            );
+                        }
+                        count += 1;
                     }
                 }
 
                 println!();
+
+                // Show which pane is currently selected
                 if !self.pane_title_match.is_empty() {
                     println!(
                         "{} {}",
@@ -855,19 +959,19 @@ impl ZellijPlugin for State {
                     );
                 }
 
-                if let Some(m) = self.tab_match {
-                    if let Some(t) = self.tab_infos.get(m) {
-                        println!(
-                            "{} {}",
-                            color_bold(WHITE, "Selected Tab ->"),
-                            t.name.as_str().blue().bold()
-                        );
-                    }
-                } else {
+                // Show which tab the selected pane belongs to
+                if let Some(tab_pos) = self.pane_tab_position {
+                    // Look up the tab name from the tab position
+                    let tab_name = self
+                        .tab_infos
+                        .iter()
+                        .find(|t| t.position == tab_pos)
+                        .map(|t| t.name.as_str())
+                        .unwrap_or("Unknown");
                     println!(
                         "{} {}",
-                        color_bold(WHITE, "Selected Tab ->"),
-                        "No matches found".dimmed()
+                        color_bold(WHITE, "In Tab ->"),
+                        tab_name.blue().bold()
                     );
                 }
             }
