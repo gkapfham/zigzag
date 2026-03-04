@@ -308,7 +308,7 @@ impl State {
         should_render
     }
 
-    /// close current plugins and its hepler pane
+    /// Close current plugins and its hepler pane
     /// get the focused tab position
     fn get_focused_tab(&mut self) {
         for (i, t) in self.tab_infos.iter().enumerate() {
