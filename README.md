@@ -6,9 +6,25 @@ Select a tab:
 
 ![Tabs](./assets/tab.png)
 
-Select pane from currently selected tab:
+Select pane from any tab in the session:
  
 ![Pane](./assets/pane.png)
+
+
+## Enhanced Features
+
+### Enhanced Fuzzy Matching
+
+The fuzzy search is case-insensitive and tolerant of mistypes. For example,
+typing `ageM` will match `Manager` because all the characters are present
+in the candidate. This works across all views (Tabs, Panes, and Sessions).
+
+### Cross-Tab Pane Search
+
+The Panes Selector shows **all panes across all tabs** in the current session,
+not just the panes in the active tab. Each pane is displayed with its tab name
+in brackets (e.g., `my-pane [Editor]`). Selecting a pane automatically switches
+to the correct tab and focuses it.
 
 
 ## Key Bindings
