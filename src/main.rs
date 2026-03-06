@@ -1,6 +1,12 @@
 // =============================================================================
-// PathFinder — A Zellij plugin for fuzzy-finding and navigating tabs, panes,
-// and sessions.
+// Zigzag — A Zellij plugin for fuzzy-finding and navigating tabs, panes,
+// and sessions. Note that this is a fork of the pathfinder plugin:
+// https://github.com/vdbulcke/pathfinder that is not currently intended
+// for release as an official plugin. It represents a minimal extension
+// of the pathfinder codebase to support cross-tab pane searching and
+// session searching, and serves as a playground for experimenting with the
+// Rust programming language and the use of cargo to create WebAssembly
+// plugins for Zellij.
 //
 // HOW THE ZELLIJ PLUGIN SYSTEM USES THIS FILE:
 //
@@ -45,7 +51,7 @@
 //
 // DYNAMIC BEHAVIOR (what happens at runtime):
 //
-//   When the user presses a keybinding (e.g., Alt+y) to launch PathFinder:
+//   When the user presses a keybinding (e.g., Alt+y) to launch Zigzag:
 //
 //     1. Zellij loads the WASM and calls `load()`. The plugin requests
 //        permissions and subscribes to tab/pane/session/key events.
@@ -1016,7 +1022,7 @@ impl ZellijPlugin for State {
     /// Stores the user's configuration, requests the permissions needed to
     /// read application state (tabs, panes, sessions) and change it (switch
     /// tabs, close panes), subscribes to the events we care about, and
-    /// renames the plugin pane to "PathFinder".
+    /// renames the plugin pane to "Zigzag".
     fn load(&mut self, configuration: BTreeMap<String, String>) {
         self.userspace_configuration = configuration;
 
@@ -1043,7 +1049,7 @@ impl ZellijPlugin for State {
         ]);
 
         // Give the plugin pane a recognizable name in the Zellij UI
-        rename_plugin_pane(get_plugin_ids().plugin_id, "PathFinder");
+        rename_plugin_pane(get_plugin_ids().plugin_id, "Zigzag");
     }
 
     /// Called each time an event arrives from Zellij.
