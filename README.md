@@ -2,27 +2,26 @@
 
 A [Zellij](https://zellij.dev) plugin for navigating
 opened tabs and panes. With `zigzag` you can effortlessly
-`zig` and `zag` between open tabs and panes in a Zellij
-session.
+`zig` and `zag` between open tabs, panes, and sessions in an
+active Zellij session.
 
 ## About
 
 This is a fork of the
 [pathfinder](https://github.com/vdbulcke/pathfinder)
 plugin for Zellij. I created this fork to add small
-enhancements that are helpful for my workflow. I am
-maintaining this fork for my own use and do not currently
-plan to release it as an official package.
+enhancements that are helpful for my workflow. As a new user
+of Zellij, I am maintaining this fork for my own use and do
+not currently plan to release it as an official package.
 
 ## Enhanced Features
 
 ### Enhanced Fuzzy Matching
 
-The fuzzy search is case-insensitive and tolerant of
-mistypes. For example, typing `ageM` will match
-`Manager` because all the characters are present in the
-candidate. This works across all views (Tabs, Panes,
-and Sessions).
+The fuzzy search is **case-insensitive and often tolerant of
+mistypes**. For example, typing `ageM` will match `Manager`
+because all the characters are present in the candidate.
+This works across all views (Tabs, Panes, and Sessions).
 
 ### Cross-Tab Pane Search
 
@@ -76,7 +75,10 @@ mv target/wasm32-wasip1/release/zigzag.wasm ~/.config/zellij/plugins/
 
 ## Loading the Plugin
 
-### Via Zellij Config
+Make sure that you have already built the plugin and copied
+the `zigzag.wasm` file to a suitable `plugins/` directory.
+
+### Use Zellij Config
 
 ```kdl
 shared_except "locked" {
@@ -90,12 +92,8 @@ shared_except "locked" {
 
 ## About the Development
 
-I used an LLM-based coding agent to add features to
-this plugin as an opportunity to learn about Rust
-programming and WebAssembly, technologies I am not
-familiar with. This was a learning exercise for me.
-
-## About the Author
-
-Learn more about me at
-[gregorykapfhammer.com](https://www.gregorykapfhammer.com/).
+I used an LLM-based coding agent to add features to this
+plugin as an opportunity to learn about Rust programming and
+WebAssembly (WASM), technologies with which I am not very
+familiar. This was a learning exercise for me to create a
+useful plugin for Zellij using Rust and WASM.
