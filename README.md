@@ -1,29 +1,37 @@
-# Pathfinder
+# Zigzag
 
-A [Zellij](https://zellij.dev) plugin for navigating opened tabs and panes.
+A [Zellij](https://zellij.dev) plugin for navigating
+opened tabs and panes. With `zigzag` you can effortlessly
+`zig` and `zag` between open tabs and panes in a Zellij
+session.
 
-Select a tab:
+## About
 
-![Tabs](./assets/tab.png)
-
-Select pane from any tab in the session:
-
-![Pane](./assets/pane.png)
+This is a fork of the
+[pathfinder](https://github.com/vdbulcke/pathfinder)
+plugin for Zellij. I created this fork to add small
+enhancements that are helpful for my workflow. I am
+maintaining this fork for my own use and do not currently
+plan to release it as an official package.
 
 ## Enhanced Features
 
 ### Enhanced Fuzzy Matching
 
-The fuzzy search is case-insensitive and tolerant of mistypes. For example,
-typing `ageM` will match `Manager` because all the characters are present
-in the candidate. This works across all views (Tabs, Panes, and Sessions).
+The fuzzy search is case-insensitive and tolerant of
+mistypes. For example, typing `ageM` will match
+`Manager` because all the characters are present in the
+candidate. This works across all views (Tabs, Panes,
+and Sessions).
 
 ### Cross-Tab Pane Search
 
-The Panes Selector shows **all panes across all tabs** in the current session,
-not just the panes in the active tab. Each pane is displayed with its tab name
-in brackets (e.g., `my-pane [Editor]`). Selecting a pane automatically switches
-to the correct tab and focuses it.
+The Panes Selector shows **all panes across all tabs**
+in the current session, not just the panes in the
+active tab. Each pane is displayed with its tab name
+in brackets (e.g., `my-pane [Editor]`). Selecting a
+pane automatically switches to the correct tab and
+focuses it.
 
 ## Key Bindings
 
@@ -34,10 +42,6 @@ to the correct tab and focuses it.
 | Esc/Ctrl + c | quit | tab/pane/session |
 | Tab | switch mode | tab/pane/session |
 | Left/Right key | move left/right cursor in prompt | tab/pane/session |
-
-## Should I use this plugin?
-
-This is plugin is a mixed of functionalities from [session-manager](https://github.com/zellij-org/zellij/tree/main/default-plugins/session-manager) and [room](https://github.com/rvcas/room), you should look at those first.
 
 ## Requirements
 
@@ -50,55 +54,48 @@ Zellij version `v0.41.1` or later.
 | `ReadApplicationState` | Subscribe to Pane and tab events |
 | `ChangeApplicationState` | Setting plugin pane name, creating new tabs |
 
-## Install
+## Build from Source
 
-### Download WASM Binary
-
-- Download `pathfinder.wasm` binary from [release page](https://github.com/vdbulcke/pathfinder/releases).
-- Verify binary signature with cosign (see instruction bellow)
-- copy binary to zellij plugin dir:
-  - `mv target/wasm32-wasip1/release/pathfinder.wasm ~/.config/zellij/plugins/`
-
-#### Validate Signature With Cosign
-
-Make sure you have `cosign` installed locally (see [Cosign Install](https://docs.sigstore.dev/cosign/installation/)).
-
-Then you can use the `./verify_signature.sh` in this repo:
+> **Note:** This requires Rust and the WASM target to
+> be installed.
 
 ```bash
-./verify_signature.sh PATH_TO_DOWNLOADED_ARCHIVE TAG_VERSION
+# Install the WASM target if you haven't already
+rustup target add wasm32-wasip1
+
+# Clone the repository
+git clone https://github.com/gkapfham/zigzag.git
+cd zigzag
+
+# Build the plugin
+cargo build --release
+
+# Copy the compiled plugin to your Zellij plugins directory
+mv target/wasm32-wasip1/release/zigzag.wasm ~/.config/zellij/plugins/
 ```
 
-for example
-
-```bash
-$ ./verify_signature.sh ~/Downloads/pathfinder.wasm v0.1.0
-
-Checking Signature for version: v0.1.0
-Verified OK
-
-```
-
-### Build from source
-
-> WARNING: requires to have rust installed and wasm `rustup target add wasm32-wasip1`
-
-- `git clone git@github.com:vdbulcke/pathfinder.git`
-- `cd pathfinder`
-- `cargo build --release`
-- `mv target/wasm32-wasip1/release/pathfinder.wasm ~/.config/zellij/plugins/`
-
-## Loading plugin
+## Loading the Plugin
 
 ### Via Zellij Config
 
 ```kdl
 shared_except "locked" {
     bind "Ctrl y" {
-        LaunchOrFocusPlugin "file:~/.config/zellij/plugins/pathfinder.wasm" {
+        LaunchOrFocusPlugin "file:~/.config/zellij/plugins/zigzag.wasm" {
             floating true
-       
         }
     }
 }
 ```
+
+## About the Development
+
+I used an LLM-based coding agent to add features to
+this plugin as an opportunity to learn about Rust
+programming and WebAssembly, technologies I am not
+familiar with. This was a learning exercise for me.
+
+## About the Author
+
+Learn more about me at
+[gregorykapfhammer.com](https://www.gregorykapfhammer.com/).
